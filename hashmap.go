@@ -4,6 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 type HashMap struct {
@@ -23,8 +24,8 @@ type Node struct {
 }
 
 type Entry struct {
-	K interface{}
-	V interface{}
+	k interface{}
+	p unsafe.Pointer
 	hash int
 	next *Entry
 	prev *Entry
@@ -112,13 +113,17 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 	n := nodes[indexOf(h, len(nodes))]
 
 	if e := m.getNodeEntry(n, k); e != nil {
-		e.V = v
-		return v
+		for {
+			p := atomic.LoadPointer(&e.p)
+			if atomic.CompareAndSwapPointer(&e.p, p, unsafe.Pointer(&v)) {
+				return v
+			}
+		}
 	}
 
 	n.Lock()
 	defer n.Unlock()
-	if m.setNodeEntry(n, &Entry{K: k, V: v, hash: h}) {
+	if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}) {
 		n.size ++
 		atomic.AddInt64(&m.size, 1)
 	}
@@ -132,8 +137,8 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool{
 	} else {
 		next := n.header
 		for next != nil{
-			if next.K == e.K{
-				next.V = e.V
+			if next.k == e.k{
+				next.p = e.p
 				return false
 			}
 			next = next.next
@@ -189,7 +194,7 @@ func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
 	if n != nil {
 		next := n.header
 		for next != nil {
-			if next.K == k {
+			if next.k == k {
 				return next
 			}
 			next = next.next
@@ -204,7 +209,7 @@ func (m *HashMap) Get(k interface{}) (interface{}, bool) {
 	if n != nil {
 		e := m.getNodeEntry(n, k)
 		if e != nil {
-			return e.V, true
+			return *(*interface{})(e.p), true
 		}
 	}
 	return nil, false
@@ -241,8 +246,8 @@ func (m *HashMap) Del(k interface{}) bool {
 
 func (e *Entry) clone() *Entry{
 	return &Entry{
-		K: e.K,
-		V: e.V,
+		k: e.k,
+		p: e.p,
 		hash: e.hash,
 	}
 }
