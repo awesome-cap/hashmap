@@ -111,7 +111,6 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 
 	h, nodes := hash(k), m.nodes
 	n := nodes[indexOf(h, len(nodes))]
-
 	if e := m.getNodeEntry(n, k); e != nil {
 		for {
 			p := atomic.LoadPointer(&e.p)
@@ -120,7 +119,6 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 			}
 		}
 	}
-
 	n.Lock()
 	defer n.Unlock()
 	if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}) {
