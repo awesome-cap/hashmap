@@ -86,7 +86,7 @@ func hash(k interface{}) int {
 	case uintptr:
 		return int(x)
 	}
-	panic("un support key type.")
+	panic("unsupported key type.")
 }
 
 func bytesHash(bytes []byte) int{
