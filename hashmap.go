@@ -1,6 +1,7 @@
 package hashmap
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -84,9 +85,9 @@ func hash(k interface{}) uint64 {
 	case uint64:
 		return x
 	case float32:
-		return uint64(x * 1e9)
+		return math.Float64bits(float64(x))
 	case float64:
-		return uint64(x * 1e9)
+		return math.Float64bits(x)
 	case uintptr:
 		return uint64(x)
 	}
