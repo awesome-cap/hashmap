@@ -1,6 +1,7 @@
 package hashmap
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -60,4 +61,33 @@ func TestNewHashMap_Sync(t *testing.T) {
 	if hm.size != int64(batch - batch / 2) {
 		t.Fatal("TestNewHashMap_Sync DEL ERR")
 	}
+}
+
+func TestHashMap_MarshalJSON(t *testing.T) {
+	m := New()
+	m.Set("abc", "haha")
+	m.Set(1, 2)
+	m.Set("m", map[string]string{
+		"hello": "world",
+	})
+	b, err := json.Marshal(m)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s\n", b)
+}
+
+func TestHashMap_UnmarshalJSON(t *testing.T) {
+	jsonStr := "{\"1\":2,\"abc\":\"haha\",\"m\":{\"hello\":\"world\"}}"
+	m := New()
+	err := json.Unmarshal([]byte(jsonStr), m)
+	if err != nil {
+		log.Fatal(err)
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(b))
+	fmt.Println(m.Get("1"))
 }

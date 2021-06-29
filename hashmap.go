@@ -1,6 +1,8 @@
 package hashmap
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -212,7 +214,7 @@ func (m *HashMap) Get(k interface{}) (interface{}, bool) {
 	if n != nil {
 		e := m.getNodeEntry(n, k)
 		if e != nil {
-			return *(*interface{})(e.p), true
+			return e.value(), true
 		}
 	}
 	return nil, false
@@ -253,4 +255,33 @@ func (e *Entry) clone() *Entry{
 		p: e.p,
 		hash: e.hash,
 	}
+}
+
+func (e *Entry) value() interface{} {
+	return *(*interface{})(e.p)
+}
+
+func (m *HashMap) UnmarshalJSON(b []byte) error{
+	data := map[string]interface{}{}
+	err := json.Unmarshal(b, &data)
+	if err != nil{
+		return err
+	}
+	for k, v := range data{
+		m.Set(k, v)
+	}
+	return nil
+}
+
+func (m *HashMap) MarshalJSON() ([]byte, error) {
+	nodes := m.nodes
+	data := map[string]interface{}{}
+	for _, node := range nodes{
+		next := node.header
+		for next != nil {
+			data[fmt.Sprintf("%v", next.k)] = next.value()
+			next = next.next
+		}
+	}
+	return json.Marshal(data)
 }
