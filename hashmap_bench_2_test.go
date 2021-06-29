@@ -2,7 +2,7 @@
 2 * @Author: Nico
 3 * @Date: 2021/6/28 21:40
 4 */
-package _struct
+package hashmap
 
 import (
 	"strconv"

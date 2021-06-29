@@ -1,4 +1,4 @@
-package _struct
+package hashmap
 
 import (
 	"sync"
