@@ -26,7 +26,7 @@ type Node struct {
 type Entry struct {
 	k interface{}
 	p unsafe.Pointer
-	hash int
+	hash uint64
 	next *Entry
 	prev *Entry
 }
@@ -46,7 +46,7 @@ func allocate(capacity int) (nodes []*Node){
 	return
 }
 
-func hash(k interface{}) int {
+func hash(k interface{}) uint64 {
 	if k == nil {
 		return 0
 	}
@@ -62,34 +62,38 @@ func hash(k interface{}) int {
 			return 1
 		}
 	case time.Time:
-		return x.Nanosecond()
+		return uint64(x.UnixNano())
 	case int:
-		return int(uintptr(x))
+		return uint64(x)
 	case int8:
-		return int(uintptr(x))
+		return uint64(x)
 	case int16:
-		return int(uintptr(x))
+		return uint64(x)
 	case int32:
-		return int(uintptr(x))
+		return uint64(x)
 	case int64:
-		return int(uintptr(x))
+		return uint64(x)
 	case uint:
-		return int(uintptr(x))
+		return uint64(x)
 	case uint8:
-		return int(uintptr(x))
+		return uint64(x)
 	case uint16:
-		return int(uintptr(x))
+		return uint64(x)
 	case uint32:
-		return int(uintptr(x))
+		return uint64(x)
 	case uint64:
-		return int(uintptr(x))
+		return x
+	case float32:
+		return uint64(x * 1e9)
+	case float64:
+		return uint64(x * 1e9)
 	case uintptr:
-		return int(x)
+		return uint64(x)
 	}
 	panic("unsupported key type.")
 }
 
-func bytesHash(bytes []byte) int{
+func bytesHash(bytes []byte) uint64{
 	hash := uint32(2166136261)
 	const prime32 = uint32(16777619)
 	keyLength := len(bytes)
@@ -97,11 +101,11 @@ func bytesHash(bytes []byte) int{
 		hash *= prime32
 		hash ^= uint32(bytes[i])
 	}
-	return int(hash)
+	return uint64(hash)
 }
 
-func indexOf(hash int, capacity int) int{
-	return hash & (capacity - 1)
+func indexOf(hash uint64, capacity int) int{
+	return int(hash & uint64(capacity - 1))
 }
 
 func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
