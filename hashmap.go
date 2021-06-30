@@ -31,7 +31,6 @@ type Entry struct {
 	p    unsafe.Pointer
 	hash uint64
 	next *Entry
-	prev *Entry
 }
 
 func New() *HashMap {
@@ -140,8 +139,7 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 
 func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
 	if n.head == nil {
-		n.head = e
-		n.tail = e
+		n.head, n.tail = e, e
 	} else {
 		next := n.head
 		for next != nil {
@@ -151,9 +149,7 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
 			}
 			next = next.next
 		}
-		n.tail.next = e
-		e.prev = n.tail
-		n.tail = e
+		n.tail.next, n.tail = e, e
 	}
 	return true
 }
@@ -179,15 +175,11 @@ func (m *HashMap) doResize() {
 	for _, old := range m.nodes {
 		next := old.head
 		for next != nil {
-			newNode := nodes[indexOf(next.hash, capacity)]
-			e := next.clone()
+			newNode, e := nodes[indexOf(next.hash, capacity)], next.clone()
 			if newNode.head == nil {
-				newNode.head = e
-				newNode.tail = e
+				newNode.head, newNode.tail = e, e
 			} else {
-				newNode.tail.next = e
-				e.prev = newNode.tail
-				newNode.tail = e
+				newNode.tail.next, newNode.tail = e, e
 			}
 			size++
 			newNode.size++
@@ -199,14 +191,12 @@ func (m *HashMap) doResize() {
 }
 
 func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
-	if n != nil {
-		next := n.head
-		for next != nil {
-			if next.k == k {
-				return next
-			}
-			next = next.next
+	next := n.head
+	for next != nil {
+		if next.k == k {
+			return next
 		}
+		next = next.next
 	}
 	return nil
 }
@@ -231,23 +221,25 @@ func (m *HashMap) Del(k interface{}) bool {
 	n := nodes[indexOf(hash(k), len(nodes))]
 	n.Lock()
 	defer n.Unlock()
-	e := m.getNodeEntry(n, k)
-	if e != nil {
-		if e.prev == nil && e.next == nil {
-			n.head = nil
-			n.tail = nil
-		} else if e.prev == nil {
-			n.head = e.next
-			e.next.prev = nil
-		} else if e.next == nil {
-			n.tail = e.prev
-			e.prev.next = nil
-		} else {
-			e.prev.next = e.next
-			e.next.prev = e.prev
+	var next, prev *Entry = n.head, nil
+	for next != nil {
+		if next.k == k {
+			if prev == nil {
+				n.head = next.next
+				if n.head == nil {
+					n.tail = nil
+				}
+			}else{
+				prev.next = next.next
+				if prev.next == nil {
+					n.tail = prev
+				}
+			}
+			n.size --
+			atomic.AddInt64(&m.size, -1)
+			return true
 		}
-		n.size--
-		atomic.AddInt64(&m.size, -1)
+		prev, next = next, next.next
 	}
 	return false
 }

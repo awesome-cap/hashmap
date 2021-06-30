@@ -67,7 +67,7 @@ func TestNewHashMap_Sync(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	fmt.Println(hm.size)
+	fmt.Println("set size", hm.size)
 	if hm.size != int64(batch) {
 		t.Fatal("TestNewHashMap_Sync SET ERR")
 	}
@@ -81,6 +81,7 @@ func TestNewHashMap_Sync(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	fmt.Println("after del size", hm.size)
 	if hm.size != int64(batch-batch/2) {
 		t.Fatal("TestNewHashMap_Sync DEL ERR")
 	}
