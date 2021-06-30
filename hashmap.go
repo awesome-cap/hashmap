@@ -14,8 +14,13 @@ type HashMap struct {
 	sync.RWMutex
 
 	size       int64
-	nodes      []*Node
+	table 	   *Table
 	loadFactor float64
+}
+
+type Table struct {
+	nodes []*Node
+	ab 	  int
 }
 
 type Node struct {
@@ -30,12 +35,15 @@ type Entry struct {
 	k    interface{}
 	p    unsafe.Pointer
 	hash uint64
-	next *Entry
+	next []*Entry
 }
 
 func New() *HashMap {
 	return &HashMap{
-		nodes:      allocate(16),
+		table:      &Table{
+			nodes: allocate(16),
+			ab:    0,
+		},
 		loadFactor: 0.7,
 	}
 }
@@ -110,6 +118,10 @@ func indexOf(hash uint64, capacity int) int {
 	return int(hash & uint64(capacity-1))
 }
 
+func (t *Table) len() int{
+	return len(t.nodes)
+}
+
 //Set will CAS the existing value if k exists. If k is new, this function is locked and set node's head
 //Similar to Java's hashmap's Put
 //returns old value if k previously exists
@@ -119,17 +131,17 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 	m.RLock()
 	defer m.RUnlock()
 
-	h, nodes := hash(k), m.nodes
-	n := nodes[indexOf(h, len(nodes))]
+	h, t := hash(k), m.table
+	n := t.nodes[indexOf(h, t.len())]
 
 	//If key exists
-	if e := m.getNodeEntry(n, k); e != nil {
+	if e := m.getNodeEntry(t, n, k); e != nil {
 		oldValue := e.value()
 		atomic.StorePointer(&e.p, unsafe.Pointer(&v))
 		return oldValue
 	}
 	n.Lock()
-	if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}) {
+	if m.setNodeEntry(t, n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h, next: make([]*Entry, 2)}) {
 		n.size++
 		atomic.AddInt64(&m.size, 1)
 	}
@@ -137,7 +149,7 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 	return nil
 }
 
-func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
+func (m *HashMap) setNodeEntry(t *Table, n *Node, e *Entry) bool {
 	if n.head == nil {
 		n.head, n.tail = e, e
 	} else {
@@ -147,15 +159,15 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
 				next.p = e.p
 				return false
 			}
-			next = next.next
+			next = next.next[t.ab]
 		}
-		n.tail.next, n.tail = e, e
+		n.tail.next[t.ab], n.tail = e, e
 	}
 	return true
 }
 
 func (m *HashMap) dilate() bool {
-	return m.size > int64(float64(len(m.nodes))*m.loadFactor*3)
+	return m.size > int64(float64(m.table.len())*m.loadFactor*3)
 }
 
 func (m *HashMap) resize() {
@@ -169,43 +181,45 @@ func (m *HashMap) resize() {
 }
 
 func (m *HashMap) doResize() {
-	capacity := len(m.nodes) * 2
-	nodes := allocate(capacity)
+	oldTable := m.table
+	newTable := &Table{nodes: allocate(oldTable.len() * 2), ab: m.table.ab ^ 1}
+	capacity := newTable.len()
 	size := int64(0)
-	for _, old := range m.nodes {
-		next := old.head
+	for _, node := range oldTable.nodes {
+		next := node.head
 		for next != nil {
-			newNode, e := nodes[indexOf(next.hash, capacity)], next.clone()
+			next.next[newTable.ab] = nil
+			newNode := newTable.nodes[indexOf(next.hash, capacity)]
 			if newNode.head == nil {
-				newNode.head, newNode.tail = e, e
+				newNode.head, newNode.tail = next, next
 			} else {
-				newNode.tail.next, newNode.tail = e, e
+				newNode.tail.next[newTable.ab], newNode.tail = next, next
 			}
 			size++
 			newNode.size++
-			next = next.next
+			next = next.next[oldTable.ab]
 		}
 	}
-	m.nodes = nodes
 	m.size = size
+	m.table = newTable
 }
 
-func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
+func (m *HashMap) getNodeEntry(t *Table, n *Node, k interface{}) *Entry {
 	next := n.head
 	for next != nil {
 		if next.k == k {
 			return next
 		}
-		next = next.next
+		next = next.next[t.ab]
 	}
 	return nil
 }
 
 func (m *HashMap) Get(k interface{}) (interface{}, bool) {
-	nodes := m.nodes
-	n := nodes[indexOf(hash(k), len(nodes))]
+	t := m.table
+	n := t.nodes[indexOf(hash(k), t.len())]
 	if n != nil {
-		e := m.getNodeEntry(n, k)
+		e := m.getNodeEntry(t, n, k)
 		if e != nil {
 			return e.value(), true
 		}
@@ -217,21 +231,21 @@ func (m *HashMap) Del(k interface{}) bool {
 	m.RLock()
 	defer m.RUnlock()
 
-	nodes := m.nodes
-	n := nodes[indexOf(hash(k), len(nodes))]
+	t := m.table
+	n := t.nodes[indexOf(hash(k), t.len())]
 	n.Lock()
 	defer n.Unlock()
 	var next, prev *Entry = n.head, nil
 	for next != nil {
 		if next.k == k {
 			if prev == nil {
-				n.head = next.next
+				n.head = next.next[t.ab]
 				if n.head == nil {
 					n.tail = nil
 				}
 			}else{
-				prev.next = next.next
-				if prev.next == nil {
+				prev.next[t.ab] = next.next[t.ab]
+				if prev.next[t.ab] == nil {
 					n.tail = prev
 				}
 			}
@@ -239,7 +253,7 @@ func (m *HashMap) Del(k interface{}) bool {
 			atomic.AddInt64(&m.size, -1)
 			return true
 		}
-		prev, next = next, next.next
+		prev, next = next, next.next[t.ab]
 	}
 	return false
 }
@@ -249,6 +263,7 @@ func (e *Entry) clone() *Entry {
 		k:    e.k,
 		p:    e.p,
 		hash: e.hash,
+		next: make([]*Entry, 2),
 	}
 }
 
@@ -269,13 +284,13 @@ func (m *HashMap) UnmarshalJSON(b []byte) error {
 }
 
 func (m *HashMap) MarshalJSON() ([]byte, error) {
-	nodes := m.nodes
+	t := m.table
 	data := map[string]interface{}{}
-	for _, node := range nodes {
+	for _, node := range t.nodes {
 		next := node.head
 		for next != nil {
 			data[fmt.Sprintf("%v", next.k)] = next.value()
-			next = next.next
+			next = next.next[t.ab]
 		}
 	}
 	return json.Marshal(data)
