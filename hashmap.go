@@ -13,37 +13,37 @@ import (
 type HashMap struct {
 	sync.RWMutex
 
-	size int64
-	nodes []*Node
+	size       int64
+	nodes      []*Node
 	loadFactor float64
 }
 
 type Node struct {
 	sync.Mutex
 
-	header *Entry
+	head *Entry
 	tail *Entry
 	size int
 }
 
 type Entry struct {
-	k interface{}
-	p unsafe.Pointer
+	k    interface{}
+	p    unsafe.Pointer
 	hash uint64
 	next *Entry
 	prev *Entry
 }
 
-func New() *HashMap{
+func New() *HashMap {
 	return &HashMap{
-		nodes: allocate(16),
+		nodes:      allocate(16),
 		loadFactor: 0.7,
 	}
 }
 
-func allocate(capacity int) (nodes []*Node){
+func allocate(capacity int) (nodes []*Node) {
 	nodes = make([]*Node, capacity)
-	for i := 0; i < capacity; i ++{
+	for i := 0; i < capacity; i++ {
 		nodes[i] = &Node{}
 	}
 	return
@@ -61,7 +61,7 @@ func hash(k interface{}) uint64 {
 	case bool:
 		if x {
 			return 0
-		}else{
+		} else {
 			return 1
 		}
 	case time.Time:
@@ -96,7 +96,7 @@ func hash(k interface{}) uint64 {
 	panic("unsupported key type.")
 }
 
-func bytesHash(bytes []byte) uint64{
+func bytesHash(bytes []byte) uint64 {
 	hash := uint32(2166136261)
 	const prime32 = uint32(16777619)
 	keyLength := len(bytes)
@@ -107,10 +107,14 @@ func bytesHash(bytes []byte) uint64{
 	return uint64(hash)
 }
 
-func indexOf(hash uint64, capacity int) int{
-	return int(hash & uint64(capacity - 1))
+func indexOf(hash uint64, capacity int) int {
+	return int(hash & uint64(capacity-1))
 }
 
+//Set will CAS the existing value if k exists. If k is new, this function is locked and set node's head
+//Similar to Java's hashmap's Put
+//returns old value if k previously exists
+//returns nil if k is new
 func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 	m.resize()
 	m.RLock()
@@ -118,31 +122,30 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 
 	h, nodes := hash(k), m.nodes
 	n := nodes[indexOf(h, len(nodes))]
+
+	//If key exists
 	if e := m.getNodeEntry(n, k); e != nil {
-		for {
-			p := atomic.LoadPointer(&e.p)
-			if atomic.CompareAndSwapPointer(&e.p, p, unsafe.Pointer(&v)) {
-				return v
-			}
-		}
+		oldValue := e.value()
+		atomic.StorePointer(&e.p, unsafe.Pointer(&v))
+		return oldValue
 	}
 	n.Lock()
-	defer n.Unlock()
 	if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}) {
-		n.size ++
+		n.size++
 		atomic.AddInt64(&m.size, 1)
 	}
-	return v
+	n.Unlock()
+	return nil
 }
 
-func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool{
-	if n.header == nil {
-		n.header = e
+func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
+	if n.head == nil {
+		n.head = e
 		n.tail = e
 	} else {
-		next := n.header
-		for next != nil{
-			if next.k == e.k{
+		next := n.head
+		for next != nil {
+			if next.k == e.k {
 				next.p = e.p
 				return false
 			}
@@ -156,7 +159,7 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool{
 }
 
 func (m *HashMap) dilate() bool {
-	return m.size > int64(float64(len(m.nodes)) * m.loadFactor * 3)
+	return m.size > int64(float64(len(m.nodes))*m.loadFactor*3)
 }
 
 func (m *HashMap) resize() {
@@ -169,25 +172,25 @@ func (m *HashMap) resize() {
 	}
 }
 
-func (m *HashMap) doResize()  {
+func (m *HashMap) doResize() {
 	capacity := len(m.nodes) * 2
 	nodes := allocate(capacity)
 	size := int64(0)
 	for _, old := range m.nodes {
-		next := old.header
+		next := old.head
 		for next != nil {
 			newNode := nodes[indexOf(next.hash, capacity)]
 			e := next.clone()
-			if newNode.header == nil {
-				newNode.header = e
+			if newNode.head == nil {
+				newNode.head = e
 				newNode.tail = e
-			}else{
+			} else {
 				newNode.tail.next = e
 				e.prev = newNode.tail
 				newNode.tail = e
 			}
-			size ++
-			newNode.size ++
+			size++
+			newNode.size++
 			next = next.next
 		}
 	}
@@ -197,7 +200,7 @@ func (m *HashMap) doResize()  {
 
 func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
 	if n != nil {
-		next := n.header
+		next := n.head
 		for next != nil {
 			if next.k == k {
 				return next
@@ -230,29 +233,29 @@ func (m *HashMap) Del(k interface{}) bool {
 	defer n.Unlock()
 	e := m.getNodeEntry(n, k)
 	if e != nil {
-		if e.prev == nil && e.next == nil{
-			n.header = nil
+		if e.prev == nil && e.next == nil {
+			n.head = nil
 			n.tail = nil
-		}else if e.prev == nil {
-			n.header = e.next
+		} else if e.prev == nil {
+			n.head = e.next
 			e.next.prev = nil
-		}else if e.next == nil {
+		} else if e.next == nil {
 			n.tail = e.prev
 			e.prev.next = nil
-		}else{
+		} else {
 			e.prev.next = e.next
 			e.next.prev = e.prev
 		}
-		n.size --
+		n.size--
 		atomic.AddInt64(&m.size, -1)
 	}
 	return false
 }
 
-func (e *Entry) clone() *Entry{
+func (e *Entry) clone() *Entry {
 	return &Entry{
-		k: e.k,
-		p: e.p,
+		k:    e.k,
+		p:    e.p,
 		hash: e.hash,
 	}
 }
@@ -261,13 +264,13 @@ func (e *Entry) value() interface{} {
 	return *(*interface{})(e.p)
 }
 
-func (m *HashMap) UnmarshalJSON(b []byte) error{
+func (m *HashMap) UnmarshalJSON(b []byte) error {
 	data := map[string]interface{}{}
 	err := json.Unmarshal(b, &data)
-	if err != nil{
+	if err != nil {
 		return err
 	}
-	for k, v := range data{
+	for k, v := range data {
 		m.Set(k, v)
 	}
 	return nil
@@ -276,8 +279,8 @@ func (m *HashMap) UnmarshalJSON(b []byte) error{
 func (m *HashMap) MarshalJSON() ([]byte, error) {
 	nodes := m.nodes
 	data := map[string]interface{}{}
-	for _, node := range nodes{
-		next := node.header
+	for _, node := range nodes {
+		next := node.head
 		for next != nil {
 			data[fmt.Sprintf("%v", next.k)] = next.value()
 			next = next.next

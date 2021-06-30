@@ -3,7 +3,6 @@ package hashmap
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"sync"
 	"testing"
@@ -14,21 +13,45 @@ func TestNewHashMap(t *testing.T) {
 	hm := New()
 	batch := 1000000
 	start := time.Now().UnixNano()
-	for i := 0; i < batch; i ++ {
+	for i := 0; i < batch; i++ {
 		hm.Set(i, i)
 	}
 	end := time.Now().UnixNano()
-	fmt.Println("set:", (end - start) / 1e6)
+	fmt.Println("set:", (end-start)/1e6)
 
 	start = time.Now().UnixNano()
-	for i := 0; i < batch; i ++ {
+	for i := 0; i < batch; i++ {
 		v, e := hm.Get(i)
-		if ! e || v != i{
-			log.Fatal("data err ", i)
+		if !e || v != i {
+			t.Fatal("data err ", i)
 		}
 	}
 	end = time.Now().UnixNano()
-	fmt.Println("get:", (end - start) / 1e6)
+	fmt.Println("get:", (end-start)/1e6)
+}
+
+func TestHashMapCorrectness(t *testing.T) {
+	hm := New()
+	batch := 1000000
+	start := time.Now().UnixNano()
+	for i := 0; i < batch; i++ {
+		hm.Set(i, i)
+	}
+	for i := 0; i < batch; i++ {
+		v, _ := hm.Get(i)
+		v2 := hm.Set(i, v.(int)+1)
+		if v2 != i {
+			t.Fatalf("v2 val : %v", v2)
+		}
+	}
+	for i := 0; i < batch; i++ {
+		v, e := hm.Get(i)
+		if !e || v != i+1 {
+			t.Fatal("data err ", i)
+		}
+	}
+	end := time.Now().UnixNano()
+	fmt.Println("get:", (end-start)/1e6)
 }
 
 func TestNewHashMap_Sync(t *testing.T) {
@@ -36,7 +59,7 @@ func TestNewHashMap_Sync(t *testing.T) {
 	batch := 100000
 	wg := sync.WaitGroup{}
 	wg.Add(batch)
-	for i := 0; i < batch; i ++ {
+	for i := 0; i < batch; i++ {
 		n := i
 		go func() {
 			hm.Set(strconv.Itoa(n), n)
@@ -50,7 +73,7 @@ func TestNewHashMap_Sync(t *testing.T) {
 	}
 
 	wg.Add(batch / 2)
-	for i := 0; i < batch / 2; i ++ {
+	for i := 0; i < batch/2; i++ {
 		n := i
 		go func() {
 			hm.Del(strconv.Itoa(n))
@@ -58,7 +81,7 @@ func TestNewHashMap_Sync(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if hm.size != int64(batch - batch / 2) {
+	if hm.size != int64(batch-batch/2) {
 		t.Fatal("TestNewHashMap_Sync DEL ERR")
 	}
 }
@@ -72,7 +95,7 @@ func TestHashMap_MarshalJSON(t *testing.T) {
 	})
 	b, err := json.Marshal(m)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	fmt.Printf("%s\n", b)
 }
@@ -82,11 +105,11 @@ func TestHashMap_UnmarshalJSON(t *testing.T) {
 	m := New()
 	err := json.Unmarshal([]byte(jsonStr), m)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 	fmt.Println(string(b))
 	fmt.Println(m.Get("1"))
