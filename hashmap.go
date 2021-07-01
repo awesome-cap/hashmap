@@ -36,6 +36,7 @@ type Entry struct {
 	p    unsafe.Pointer
 	hash uint64
 	next []*Entry
+	prev []*Entry
 }
 
 func New() *HashMap {
@@ -141,7 +142,7 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 		return oldValue
 	}
 	n.Lock()
-	if m.setNodeEntry(t, n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h, next: make([]*Entry, 2)}) {
+	if m.setNodeEntry(t, n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h, next: make([]*Entry, 2), prev: make([]*Entry, 2)}) {
 		n.size++
 		atomic.AddInt64(&m.size, 1)
 	}
@@ -161,7 +162,7 @@ func (m *HashMap) setNodeEntry(t *Table, n *Node, e *Entry) bool {
 			}
 			next = next.next[t.ab]
 		}
-		n.tail.next[t.ab], n.tail = e, e
+		n.tail.next[t.ab], e.prev[t.ab], n.tail = e, n.tail, e
 	}
 	return true
 }
@@ -188,12 +189,12 @@ func (m *HashMap) doResize() {
 	for _, node := range oldTable.nodes {
 		next := node.head
 		for next != nil {
-			next.next[newTable.ab] = nil
+			next.next[newTable.ab], next.prev[newTable.ab] = nil, nil
 			newNode := newTable.nodes[indexOf(next.hash, capacity)]
 			if newNode.head == nil {
 				newNode.head, newNode.tail = next, next
 			} else {
-				newNode.tail.next[newTable.ab], newNode.tail = next, next
+				newNode.tail.next[newTable.ab], next.prev[newTable.ab], newNode.tail = next, newNode.tail, next
 			}
 			size++
 			newNode.size++
@@ -235,25 +236,27 @@ func (m *HashMap) Del(k interface{}) bool {
 	n := t.nodes[indexOf(hash(k), t.len())]
 	n.Lock()
 	defer n.Unlock()
-	var next, prev *Entry = n.head, nil
-	for next != nil {
-		if next.k == k {
-			if prev == nil {
-				n.head = next.next[t.ab]
-				if n.head == nil {
-					n.tail = nil
-				}
-			}else{
-				prev.next[t.ab] = next.next[t.ab]
-				if prev.next[t.ab] == nil {
-					n.tail = prev
-				}
-			}
-			n.size --
-			atomic.AddInt64(&m.size, -1)
-			return true
+
+	if e := m.getNodeEntry(t, n, k); e != nil{
+		if e.prev[t.ab] == nil && e.next[t.ab] == nil{
+			n.head, n.tail = nil, nil
+		} else if e.prev[t.ab] == nil{
+			n.head, n.head.prev[t.ab] = e.next[t.ab], nil
+		} else if e.next[t.ab] == nil{
+			n.tail, n.tail.next[t.ab] = e.prev[t.ab], nil
+		} else{
+			e.prev[t.ab].next[t.ab], e.next[t.ab].prev[t.ab] = e.next[t.ab], e.prev[t.ab]
 		}
-		prev, next = next, next.next[t.ab]
+		oldAb := t.ab ^ 1
+		if e.prev[oldAb] != nil {
+			e.prev[oldAb].next[oldAb] = nil
+		}
+		if e.next[oldAb] != nil {
+			e.next[oldAb].prev[oldAb] = nil
+		}
+		n.size --
+		atomic.AddInt64(&m.size, -1)
+		return true
 	}
 	return false
 }
