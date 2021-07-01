@@ -30,6 +30,27 @@ func TestNewHashMap(t *testing.T) {
 	fmt.Println("get:", (end-start)/1e6)
 }
 
+func TestHashMap_MSet(t *testing.T) {
+	hm := New()
+	batch := 1000000
+	ks := make([]interface{}, batch)
+	vs := make([]interface{}, batch)
+	for i := 0; i < batch; i ++{
+		ks[i] = i
+		vs[i] = i
+	}
+	hm.MSet(ks, vs)
+	for i := 0; i < batch; i++ {
+		v, e := hm.Get(i)
+		if !e || v != i {
+			t.Fatal("data err ", i)
+		}
+	}
+	if hm.resizeTimes != 1 {
+		t.Fatal("resize times err")
+	}
+}
+
 func TestHashMapCorrectness(t *testing.T) {
 	hm := New()
 	batch := 1000000

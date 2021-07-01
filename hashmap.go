@@ -10,12 +10,15 @@ import (
 	"unsafe"
 )
 
+const MaxInt = int(^uint(0) >> 1)
+
 type HashMap struct {
 	sync.RWMutex
 
-	size       int64
-	nodes      []*Node
-	loadFactor float64
+	size        int64
+	nodes       []*Node
+	loadFactor  float64
+	resizeTimes int
 }
 
 type Node struct {
@@ -116,10 +119,12 @@ func indexOf(hash uint64, capacity int) int {
 //returns old value if k previously exists
 //returns nil if k is new
 func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
-	m.resize(1)
+	m.resize(0)
 	m.RLock()
 	defer m.RUnlock()
-	n, h := m.getNodeByKey(k)
+
+	h, nodes := hash(k), m.nodes
+	n := nodes[indexOf(h, len(nodes))]
 
 	//If key exists
 	if e := m.getNodeEntry(n, k); e != nil {
@@ -138,44 +143,14 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 	return nil
 }
 
-func (m *HashMap) getNodeByKey(k interface{}) (*Node, uint64) {
-	h, nodes := hash(k), m.nodes
-	n := nodes[indexOf(h, len(nodes))]
-	return n, h
-}
-
-func (m *HashMap) MSet(ks []interface{}, vs []interface{}) interface{} {
+func (m *HashMap) MSet(ks []interface{}, vs []interface{}){
 	if len(ks) != len(vs) {
-		return nil
+		return
 	}
-	m.resize(int64(len(ks)))
-	m.RLock()
-	defer m.RUnlock()
-	unInserted := []int{}
+	m.resize(int(float64(len(ks)) * 0.66))
 	for i, k := range ks {
-		n, _ := m.getNodeByKey(k)
-
-		//If key exists
-		if e := m.getNodeEntry(n, k); e != nil {
-			oldValue := e.value()
-			atomic.StorePointer(&e.p, unsafe.Pointer(&vs[i]))
-			return oldValue
-		} else {
-			unInserted = append(unInserted, i)
-		}
+		m.Set(k, vs[i])
 	}
-	//m.resize(int64(len(unInserted)))//TODO
-	for _, i := range unInserted {
-		n, h := m.getNodeByKey(ks[i])
-		n.Lock()
-		if m.setNodeEntry(n, &Entry{k: ks[i], p: unsafe.Pointer(&vs[i]), hash: h}) {
-			n.size++
-			atomic.AddInt64(&m.size, 1)
-		}
-		n.Unlock()
-	}
-
-	return nil
 }
 
 func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
@@ -198,24 +173,34 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
 	return true
 }
 
-func (m *HashMap) dilate(toAdd int64) bool {
-	return (m.size + toAdd) > int64(float64(len(m.nodes))*m.loadFactor*3)
+func (m *HashMap) dilate(c int) bool {
+	return (m.size + int64(c)) > int64(float64(len(m.nodes))*m.loadFactor*3) && len(m.nodes) * m.multiple(c) <= MaxInt
 }
 
-func (m *HashMap) resize(toAdd int64) {
-	if m.dilate(toAdd) {
+func (m *HashMap) multiple(c int) int {
+	expect := int64(float64(m.size + int64(c)) / 3 / m.loadFactor)
+	l := len(m.nodes)
+	mul := 2
+	for int64(l * mul) < expect {
+		mul <<= 1
+	}
+	return mul
+}
+
+func (m *HashMap) resize(c int) {
+	if m.dilate(c){
 		m.Lock()
-		for m.dilate(toAdd) {
-			m.doResize()
+		for m.dilate(c){
+			m.doResize(m.multiple(c))
 		}
 		m.Unlock()
 	}
 }
 
-func (m *HashMap) doResize() {
-	capacity := len(m.nodes) * 2
+func (m *HashMap) doResize(multiple int) {
+	capacity := len(m.nodes) * multiple
 	nodes := allocate(capacity)
-	size := int64(0)
+	var size int64 = 0
 	for _, old := range m.nodes {
 		next := old.head
 		for next != nil {
@@ -236,6 +221,7 @@ func (m *HashMap) doResize() {
 	}
 	m.nodes = nodes
 	m.size = size
+	m.resizeTimes ++
 }
 
 func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
