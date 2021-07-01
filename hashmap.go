@@ -249,10 +249,10 @@ func (m *HashMap) Del(k interface{}) bool {
 		}
 		oldAb := t.ab ^ 1
 		if e.prev[oldAb] != nil {
-			e.prev[oldAb].next[oldAb] = nil
+			e.prev[oldAb].next[oldAb] = e.next[oldAb]
 		}
 		if e.next[oldAb] != nil {
-			e.next[oldAb].prev[oldAb] = nil
+			e.next[oldAb].prev[oldAb] = e.prev[oldAb]
 		}
 		n.size --
 		atomic.AddInt64(&m.size, -1)
