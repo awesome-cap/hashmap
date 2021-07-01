@@ -116,12 +116,10 @@ func indexOf(hash uint64, capacity int) int {
 //returns old value if k previously exists
 //returns nil if k is new
 func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
-	m.resize()
+	m.resize(1)
 	m.RLock()
 	defer m.RUnlock()
-
-	h, nodes := hash(k), m.nodes
-	n := nodes[indexOf(h, len(nodes))]
+	n, h := m.getNodeByKey(k)
 
 	//If key exists
 	if e := m.getNodeEntry(n, k); e != nil {
@@ -129,12 +127,54 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 		atomic.StorePointer(&e.p, unsafe.Pointer(&v))
 		return oldValue
 	}
+
+	//If key does not exist
 	n.Lock()
 	if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}) {
 		n.size++
 		atomic.AddInt64(&m.size, 1)
 	}
 	n.Unlock()
+	return nil
+}
+
+func (m *HashMap) getNodeByKey(k interface{}) (*Node, uint64) {
+	h, nodes := hash(k), m.nodes
+	n := nodes[indexOf(h, len(nodes))]
+	return n, h
+}
+
+func (m *HashMap) MSet(ks []interface{}, vs []interface{}) interface{} {
+	if len(ks) != len(vs) {
+		return nil
+	}
+	m.resize(int64(len(ks)))
+	m.RLock()
+	defer m.RUnlock()
+	unInserted := []int{}
+	for i, k := range ks {
+		n, _ := m.getNodeByKey(k)
+
+		//If key exists
+		if e := m.getNodeEntry(n, k); e != nil {
+			oldValue := e.value()
+			atomic.StorePointer(&e.p, unsafe.Pointer(&vs[i]))
+			return oldValue
+		} else {
+			unInserted = append(unInserted, i)
+		}
+	}
+	//m.resize(int64(len(unInserted)))//TODO
+	for _, i := range unInserted {
+		n, h := m.getNodeByKey(ks[i])
+		n.Lock()
+		if m.setNodeEntry(n, &Entry{k: ks[i], p: unsafe.Pointer(&vs[i]), hash: h}) {
+			n.size++
+			atomic.AddInt64(&m.size, 1)
+		}
+		n.Unlock()
+	}
+
 	return nil
 }
 
@@ -158,17 +198,17 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry) bool {
 	return true
 }
 
-func (m *HashMap) dilate() bool {
-	return m.size > int64(float64(len(m.nodes))*m.loadFactor*3)
+func (m *HashMap) dilate(toAdd int64) bool {
+	return (m.size + toAdd) > int64(float64(len(m.nodes))*m.loadFactor*3)
 }
 
-func (m *HashMap) resize() {
-	if m.dilate() {
+func (m *HashMap) resize(toAdd int64) {
+	if m.dilate(toAdd) {
 		m.Lock()
-		defer m.Unlock()
-		if m.dilate() {
+		for m.dilate(toAdd) {
 			m.doResize()
 		}
+		m.Unlock()
 	}
 }
 
