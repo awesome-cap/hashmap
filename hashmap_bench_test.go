@@ -30,14 +30,13 @@ func setupGoMap(b *testing.B) map[uintptr]uintptr {
 
 func setupGoSyncMap(b *testing.B) *sync.Map {
 	m := &sync.Map{}
-	for i :=uintptr(0); i < benchmarkItemCount; i++ {
+	for i := uintptr(0); i < benchmarkItemCount; i++ {
 		m.Store(i, i)
 	}
 
 	b.ResetTimer()
 	return m
 }
-
 
 func BenchmarkStrconv(b *testing.B) {
 	for i := 0; i < b.N; i++ {
@@ -192,7 +191,7 @@ func BenchmarkMultiGetSetDifferentSyncMap(b *testing.B) {
 	}
 }
 
-func benchmarkMultiGetSetBlock(b *testing.B) {
+func BenchmarkMultiGetSetBlock(b *testing.B) {
 	m := New()
 	finished := make(chan struct{}, 2*b.N)
 	get, set := GetSet(m, finished)
@@ -275,7 +274,7 @@ func BenchmarkReadGoMapUintUnsafe(b *testing.B) {
 	m := setupGoMap(b)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i :=uintptr(0); i < benchmarkItemCount; i++ {
+			for i := uintptr(0); i < benchmarkItemCount; i++ {
 				j := m[i]
 				if j != i {
 					b.Fail()
@@ -290,7 +289,7 @@ func BenchmarkReadGoMapUintMutex(b *testing.B) {
 	l := &sync.RWMutex{}
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i :=uintptr(0); i < benchmarkItemCount; i++ {
+			for i := uintptr(0); i < benchmarkItemCount; i++ {
 				l.RLock()
 				j := m[i]
 				l.RUnlock()
@@ -306,7 +305,7 @@ func BenchmarkReadGoSyncMapUint(b *testing.B) {
 	m := setupGoSyncMap(b)
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i :=uintptr(0); i < benchmarkItemCount; i++ {
+			for i := uintptr(0); i < benchmarkItemCount; i++ {
 				j, _ := m.Load(i)
 				if j != i {
 					b.Fail()
@@ -324,13 +323,13 @@ func BenchmarkReadHashMapWithWritesUint(b *testing.B) {
 		// use 1 thread as writer
 		if atomic.CompareAndSwapInt32(&writer, 0, 1) {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					m.Set(i, i)
 				}
 			}
 		} else {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					j, _ := m.Get(i)
 					if j != i {
 						b.Fail()
@@ -350,7 +349,7 @@ func BenchmarkReadGoMapWithWritesUintMutex(b *testing.B) {
 		// use 1 thread as writer
 		if atomic.CompareAndSwapInt32(&writer, 0, 1) {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					l.Lock()
 					m[i] = i
 					l.Unlock()
@@ -358,7 +357,7 @@ func BenchmarkReadGoMapWithWritesUintMutex(b *testing.B) {
 			}
 		} else {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					l.RLock()
 					j := m[i]
 					l.RUnlock()
@@ -371,7 +370,6 @@ func BenchmarkReadGoMapWithWritesUintMutex(b *testing.B) {
 	})
 }
 
-
 func BenchmarkReadGoSyncMapWithWritesUint(b *testing.B) {
 	m := setupGoSyncMap(b)
 	var writer int32
@@ -380,13 +378,13 @@ func BenchmarkReadGoSyncMapWithWritesUint(b *testing.B) {
 		// use 1 thread as writer
 		if atomic.CompareAndSwapInt32(&writer, 0, 1) {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					m.Store(i, i)
 				}
 			}
 		} else {
 			for pb.Next() {
-				for i :=uintptr(0); i < benchmarkItemCount; i++ {
+				for i := uintptr(0); i < benchmarkItemCount; i++ {
 					j, _ := m.Load(i)
 					if j != i {
 						b.Fail()
@@ -401,7 +399,7 @@ func BenchmarkWriteHashMapUint(b *testing.B) {
 	m := New()
 
 	for n := 0; n < b.N; n++ {
-		for i :=uintptr(0); i < benchmarkItemCount; i++ {
+		for i := uintptr(0); i < benchmarkItemCount; i++ {
 			m.Set(i, i)
 		}
 	}
@@ -411,19 +409,18 @@ func BenchmarkWriteGoMapUnsafeUint(b *testing.B) {
 	m := make(map[uintptr]uintptr)
 
 	for n := 0; n < b.N; n++ {
-		for i :=uintptr(0); i < benchmarkItemCount; i++ {
+		for i := uintptr(0); i < benchmarkItemCount; i++ {
 			m[i] = i
 		}
 	}
 }
-
 
 func BenchmarkWriteGoMapMutexUint(b *testing.B) {
 	m := make(map[uintptr]uintptr)
 	l := &sync.RWMutex{}
 
 	for n := 0; n < b.N; n++ {
-		for i :=uintptr(0); i < benchmarkItemCount; i++ {
+		for i := uintptr(0); i < benchmarkItemCount; i++ {
 			l.Lock()
 			m[i] = i
 			l.Unlock()
@@ -435,7 +432,7 @@ func BenchmarkWriteGoSyncMapUint(b *testing.B) {
 	m := &sync.Map{}
 
 	for n := 0; n < b.N; n++ {
-		for i :=uintptr(0); i < benchmarkItemCount; i++ {
+		for i := uintptr(0); i < benchmarkItemCount; i++ {
 			m.Store(i, i)
 		}
 	}
