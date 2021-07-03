@@ -13,13 +13,16 @@ import (
 const MaxInt = 2147483647
 
 type HashMap struct {
-    rw sync.RWMutex
-    nl sync.Mutex
+    sync.RWMutex
 
-    size        int64
-    nodes       []*Node
-    loadFactor  float64
-    resizeTimes int
+    size       int64
+    table 	   *Table
+    loadFactor float64
+}
+
+type Table struct {
+    nodes []*Node
+    ab 	  int
 }
 
 type Node struct {
@@ -34,19 +37,26 @@ type Entry struct {
     k    interface{}
     p    unsafe.Pointer
     hash uint64
-    next *Entry
-    prev *Entry
+    next []*Entry
+    prev []*Entry
 }
 
 func New() *HashMap {
     return &HashMap{
-        nodes:      allocate(16),
-        loadFactor: 0.7,
+        table:      &Table{
+            nodes: allocate(16),
+            ab:    0,
+        },
+        loadFactor: 0.7 * 3,
     }
 }
 
-func allocate(capacity int) []*Node {
-    return make([]*Node, capacity)
+func allocate(capacity int) (nodes []*Node) {
+    nodes = make([]*Node, capacity)
+    for i := 0; i < capacity; i++ {
+        nodes[i] = &Node{}
+    }
+    return
 }
 
 func hash(k interface{}) uint64 {
@@ -111,70 +121,67 @@ func indexOf(hash uint64, capacity int) int {
     return int(hash & uint64(capacity-1))
 }
 
+func (t *Table) len() int{
+    return len(t.nodes)
+}
+
 //Set will CAS the existing value if k exists. If k is new, this function is locked and set node's head
 //Similar to Java's hashmap's Put
 //returns old value if k previously exists
 //returns nil if k is new
 func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
-    m.resize(0)
-    m.rw.RLock()
-    defer m.rw.RUnlock()
+    m.resize()
+    m.RLock()
+    defer m.RUnlock()
 
-    n, h := m.getKeyNode(k)
+    h, t := hash(k), m.table
+    n := t.nodes[indexOf(h, t.len())]
+
     //If key exists
-    if e := m.getNodeEntry(n, k); e != nil {
+    if e := m.getNodeEntry(t, n, k); e != nil {
         oldValue := e.value()
         atomic.StorePointer(&e.p, unsafe.Pointer(&v))
         return oldValue
     }
-
-    //If key does not exist
     n.Lock()
-    defer n.Unlock()
-    if m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}, false) {
+    if m.setNodeEntry(t, n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h, next: make([]*Entry, 2), prev: make([]*Entry, 2)}, false) {
         n.size++
         atomic.AddInt64(&m.size, 1)
     }
+    n.Unlock()
     return nil
-}
-
-func (m *HashMap) SetNX(k interface{}, v interface{}) bool {
-    m.resize(0)
-    m.rw.RLock()
-    defer m.rw.RUnlock()
-    n, h := m.getKeyNode(k)
-    n.Lock()
-    defer n.Unlock()
-    return m.setNodeEntry(n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h}, true)
-}
-
-func (m *HashMap) getKeyNode(k interface{}) (*Node, uint64){
-    h, nodes := hash(k), m.nodes
-    i := indexOf(h, len(nodes))
-    if nodes[i] == nil {
-        m.nl.Lock()
-        defer m.nl.Unlock()
-        if nodes[i] == nil {
-            nodes[i] = &Node{}
-        }
-    }
-    return nodes[i], h
 }
 
 func (m *HashMap) MSet(ks []interface{}, vs []interface{}){
     if len(ks) != len(vs) {
         return
     }
-    m.resize(int(float64(len(ks)) * 0.66))
     for i, k := range ks {
         m.Set(k, vs[i])
     }
 }
 
-func (m *HashMap) setNodeEntry(n *Node, e *Entry, nx bool) bool {
+
+func (m *HashMap) SetNX(k interface{}, v interface{}) bool {
+    m.resize()
+    m.RLock()
+    defer m.RUnlock()
+    t := m.table
+    n, h := t.getKeyNode(k)
+    n.Lock()
+    defer n.Unlock()
+    return m.setNodeEntry(t, n, &Entry{k: k, p: unsafe.Pointer(&v), hash: h, next: make([]*Entry, 2), prev: make([]*Entry, 2)}, true)
+}
+
+func (t *Table) getKeyNode(k interface{}) (*Node, uint64){
+    h, nodes := hash(k), t.nodes
+    i := indexOf(h, len(nodes))
+    return nodes[i], h
+}
+
+func (m *HashMap) setNodeEntry(t *Table, n *Node, e *Entry, nx bool) bool {
     if n.head == nil {
-        n.head = e
-        n.tail = e
+        n.head, n.tail = e, e
     } else {
         next := n.head
         for next != nil {
@@ -184,132 +191,102 @@ func (m *HashMap) setNodeEntry(n *Node, e *Entry, nx bool) bool {
                 }
                 return false
             }
-            next = next.next
+            next = next.next[t.ab]
         }
-        n.tail.next = e
-        e.prev = n.tail
-        n.tail = e
+        n.tail.next[t.ab], e.prev[t.ab], n.tail = e, n.tail, e
     }
     return true
 }
 
-func (m *HashMap) dilate(c int) bool {
-    return (m.size + int64(c)) > int64(float64(len(m.nodes))*m.loadFactor*3) && len(m.nodes) * m.multiple(c) <= MaxInt
+func (m *HashMap) dilate() bool {
+    return m.size > int64(float64(m.table.len())*m.loadFactor) && m.table.len() * 2 <= MaxInt
 }
 
-func (m *HashMap) multiple(c int) int {
-    expect := int64(float64(m.size + int64(c)) / 3 / m.loadFactor)
-    l, mul := len(m.nodes), 2
-    for int64(l * mul) < expect {
-        mul <<= 1
-    }
-    return mul
-}
-
-func (m *HashMap) resize(c int) {
-    if m.dilate(c){
-        m.rw.Lock()
-        defer m.rw.Unlock()
-        for m.dilate(c){
-            m.doResize(m.multiple(c))
+func (m *HashMap) resize() {
+    if m.dilate() {
+        m.Lock()
+        defer m.Unlock()
+        if m.dilate() {
+            m.doResize()
         }
     }
 }
 
-func (m *HashMap) doResize(multiple int) {
-    capacity := len(m.nodes) * multiple
-    nodes := allocate(capacity)
-    var size int64 = 0
-    for _, old := range m.nodes {
-        if old == nil {
-            continue
-        }
-        next := old.head
+func (m *HashMap) doResize() {
+    oldTable := m.table
+    newTable := &Table{nodes: allocate(oldTable.len() * 2), ab: m.table.ab ^ 1}
+    capacity := newTable.len()
+    size := int64(0)
+    for _, node := range oldTable.nodes {
+        next := node.head
         for next != nil {
-            i := indexOf(next.hash, capacity)
-            newNode := nodes[i]
-            if newNode == nil{
-                newNode = &Node{}
-                nodes[i] = newNode
-            }
-            e := next.clone()
+            next.next[newTable.ab], next.prev[newTable.ab] = nil, nil
+            newNode := newTable.nodes[indexOf(next.hash, capacity)]
             if newNode.head == nil {
-                newNode.head = e
-                newNode.tail = e
+                newNode.head, newNode.tail = next, next
             } else {
-                newNode.tail.next = e
-                e.prev = newNode.tail
-                newNode.tail = e
+                newNode.tail.next[newTable.ab], next.prev[newTable.ab], newNode.tail = next, newNode.tail, next
             }
             size++
             newNode.size++
-            next = next.next
+            next = next.next[oldTable.ab]
         }
     }
-    m.nodes = nodes
     m.size = size
-    m.resizeTimes ++
+    m.table = newTable
 }
 
-func (m *HashMap) getNodeEntry(n *Node, k interface{}) *Entry {
-    if n != nil {
-        next := n.head
-        for next != nil {
-            if next.k == k {
-                return next
-            }
-            next = next.next
+func (m *HashMap) getNodeEntry(t *Table, n *Node, k interface{}) *Entry {
+    next := n.head
+    for next != nil {
+        if next.k == k {
+            return next
         }
+        next = next.next[t.ab]
     }
     return nil
 }
 
 func (m *HashMap) Get(k interface{}) (interface{}, bool) {
-    nodes := m.nodes
-    n := nodes[indexOf(hash(k), len(nodes))]
-    if n != nil {
-        e := m.getNodeEntry(n, k)
-        if e != nil {
-            return e.value(), true
-        }
+    t := m.table
+    n, _ := t.getKeyNode(k)
+    e := m.getNodeEntry(t, n, k)
+    if e != nil {
+        return e.value(), true
     }
     return nil, false
 }
 
 func (m *HashMap) Del(k interface{}) bool {
-    m.rw.RLock()
-    defer m.rw.RUnlock()
+    m.RLock()
+    defer m.RUnlock()
 
-    n, _ := m.getKeyNode(k)
+    t := m.table
+    n, _ := t.getKeyNode(k)
     n.Lock()
     defer n.Unlock()
-    e := m.getNodeEntry(n, k)
-    if e != nil {
-        if e.prev == nil && e.next == nil {
-            n.head = nil
-            n.tail = nil
-        } else if e.prev == nil {
-            n.head = e.next
-            e.next.prev = nil
-        } else if e.next == nil {
-            n.tail = e.prev
-            e.prev.next = nil
-        } else {
-            e.prev.next = e.next
-            e.next.prev = e.prev
+    if e := m.getNodeEntry(t, n, k); e != nil{
+        if e.prev[t.ab] == nil && e.next[t.ab] == nil{
+            n.head, n.tail = nil, nil
+        } else if e.prev[t.ab] == nil{
+            n.head, n.head.prev[t.ab] = e.next[t.ab], nil
+        } else if e.next[t.ab] == nil{
+            n.tail, n.tail.next[t.ab] = e.prev[t.ab], nil
+        } else{
+            e.prev[t.ab].next[t.ab], e.next[t.ab].prev[t.ab] = e.next[t.ab], e.prev[t.ab]
         }
-        n.size--
+        oldAb := t.ab ^ 1
+        if e.prev[oldAb] != nil {
+            e.prev[oldAb].next[oldAb] = e.next[oldAb]
+        }
+        if e.next[oldAb] != nil {
+            e.next[oldAb].prev[oldAb] = e.prev[oldAb]
+        }
+        n.size --
         atomic.AddInt64(&m.size, -1)
+        return true
     }
     return false
-}
-
-func (e *Entry) clone() *Entry {
-    return &Entry{
-        k:    e.k,
-        p:    e.p,
-        hash: e.hash,
-    }
 }
 
 func (e *Entry) value() interface{} {
@@ -329,15 +306,13 @@ func (m *HashMap) UnmarshalJSON(b []byte) error {
 }
 
 func (m *HashMap) MarshalJSON() ([]byte, error) {
-    nodes := m.nodes
+    t := m.table
     data := map[string]interface{}{}
-    for _, node := range nodes {
-        if node != nil {
-            next := node.head
-            for next != nil {
-                data[fmt.Sprintf("%v", next.k)] = next.value()
-                next = next.next
-            }
+    for _, node := range t.nodes {
+        next := node.head
+        for next != nil {
+            data[fmt.Sprintf("%v", next.k)] = next.value()
+            next = next.next[t.ab]
         }
     }
     return json.Marshal(data)

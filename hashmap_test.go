@@ -46,9 +46,6 @@ func TestHashMap_MSet(t *testing.T) {
             t.Fatal("data err ", i)
         }
     }
-    if hm.resizeTimes != 1 {
-        t.Fatal("resize times err")
-    }
 }
 
 func TestHashMapCorrectness(t *testing.T) {
