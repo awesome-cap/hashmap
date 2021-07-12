@@ -144,7 +144,7 @@ func (m *HashMap) Set(k interface{}, v interface{}) interface{} {
 
 	//If key exists
 	if e := m.getNodeEntry(t, n, k); e != nil {
-		oldValue := e.value()
+		oldValue := e.Value()
 		atomic.StorePointer(&e.p, unsafe.Pointer(&v))
 		return oldValue
 	}
@@ -256,7 +256,7 @@ func (m *HashMap) Get(k interface{}) (interface{}, bool) {
 	n, _ := t.getKeyNode(k)
 	e := m.getNodeEntry(t, n, k)
 	if e != nil {
-		return e.value(), true
+		return e.Value(), true
 	}
 	return nil, false
 }
@@ -308,8 +308,16 @@ func (m *HashMap) LogicDel(k interface{}) bool {
 	return false
 }
 
-func (e *Entry) value() interface{} {
+func (e *Entry) Value() interface{} {
 	return *(*interface{})(e.p)
+}
+
+func (e *Entry) Key() interface{} {
+	return e.k
+}
+
+func (e *Entry) Flag() int32 {
+	return e.flag
 }
 
 func (m *HashMap) Foreach(fn func(e *Entry)) {
@@ -341,7 +349,7 @@ func (m *HashMap) MarshalJSON() ([]byte, error) {
 	for _, node := range t.nodes {
 		next := node.head
 		for next != nil {
-			data[fmt.Sprintf("%v", next.k)] = next.value()
+			data[fmt.Sprintf("%v", next.k)] = next.Value()
 			next = next.next[t.ab]
 		}
 	}
