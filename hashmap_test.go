@@ -48,6 +48,15 @@ func TestHashMap_MSet(t *testing.T) {
 	}
 }
 
+func TestHashMap_SetNil(t *testing.T) {
+	m := New()
+	m.Set("a", nil)
+	_, ok := m.Get("a")
+	if !ok {
+		t.Fatal("set nil err")
+	}
+}
+
 func TestHashMapCorrectness(t *testing.T) {
 	hm := New()
 	batch := 1000000
