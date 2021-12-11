@@ -273,11 +273,14 @@ func (m *HashMap) Del(k interface{}) bool {
 		if e.prev[t.ab] == nil && e.next[t.ab] == nil {
 			n.head, n.tail = nil, nil
 		} else if e.prev[t.ab] == nil {
-			n.head, n.head.prev[t.ab] = e.next[t.ab], nil
+			n.head = e.next[t.ab]
+			n.head.prev[t.ab] = nil
 		} else if e.next[t.ab] == nil {
-			n.tail, n.tail.next[t.ab] = e.prev[t.ab], nil
+			n.tail = e.prev[t.ab]
+			n.tail.next[t.ab] = nil
 		} else {
-			e.prev[t.ab].next[t.ab], e.next[t.ab].prev[t.ab] = e.next[t.ab], e.prev[t.ab]
+			e.prev[t.ab].next[t.ab] = e.next[t.ab]
+			e.next[t.ab].prev[t.ab] = e.prev[t.ab]
 		}
 		oldAb := t.ab ^ 1
 		if e.prev[oldAb] != nil {
